@@ -269,7 +269,7 @@ input[type="number"].field {
 /* ==================== 6. PAINEL PRODUTOS ==================== */
 .product-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 90px auto 36px;
+  grid-template-columns: minmax(0, 1fr) 90px auto 36px 36px;
   align-items: center;
   gap: 10px;
   padding: 6px 8px;
@@ -289,6 +289,25 @@ input[type="number"].field {
 
 .product-row .btn-remove {
   background: transparent;
+}
+
+.btn-edit {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--marrom);
+  transition: background-color 0.2s;
+}
+.btn-edit:hover {
+  background: #fbead6;
+}
+.btn-edit .material-symbols-outlined {
+  font-size: 22px;
 }
 
 .recipe {
@@ -395,6 +414,10 @@ dialog::backdrop {
   font-size: 0.9rem;
 }
 
+.recipe-row .ing-name {
+  grid-column: 1 / -1;
+}
+
 .recipe-rows {
   display: grid;
   gap: 8px;
@@ -473,7 +496,7 @@ dialog::backdrop {
   }
 
   .product-row {
-    grid-template-columns: minmax(0, 1fr) auto 36px;
+    grid-template-columns: minmax(0, 1fr) auto 36px 36px;
     border-radius: 20px;
   }
   .product-row .row-name {
@@ -498,7 +521,7 @@ dialog::backdrop {
     padding-bottom: 8px;
     border-bottom: 1px solid var(--borda);
   }
-  .recipe-row .ing-name {
+  .recipe-row .ing-choice {
     grid-column: 1 / -1;
   }
   .dialog-body {

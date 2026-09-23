@@ -78,7 +78,7 @@
             <input type="text" class="field" id="novoProdutoNome" placeholder="Ex.: COXINHA DE FRANGO" required>
 
             <h4>Receita por unidade</h4>
-            <p class="hint">Escolha um ingrediente do estoque na lista ou digite um nome novo — ele será criado no estoque com quantidade 0.</p>
+            <p class="hint">Escolha um ingrediente do estoque. Se ele ainda não existe, escolha "+ Novo ingrediente" e digite o nome — ele será criado no estoque com quantidade 0.</p>
 
             <div class="recipe-head" aria-hidden="true">
                 <span>Ingrediente</span><span>Quantia</span><span>Unidade</span><span></span>
@@ -89,7 +89,7 @@
 
             <div class="dialog-footer">
                 <button type="button" class="btn-secondary" id="btnCancelarProduto">Cancelar</button>
-                <button type="submit" class="btn-primary">Salvar produto</button>
+                <button type="submit" class="btn-primary" id="btnSalvarProduto">Salvar produto</button>
             </div>
         </form>
     </dialog>
