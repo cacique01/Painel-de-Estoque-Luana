@@ -1,4 +1,4 @@
-    /* =====================================================
+/* =====================================================
        1. ARMAZENAMENTO (mesmas chaves das páginas antigas,
           então os dados já salvos continuam funcionando)
        ===================================================== */
@@ -7,7 +7,8 @@
         proximoIdEstoque: 'nextStockId',
         receitas: 'receitas',
         nomesProdutos: 'productNames',
-        proximoIdProduto: 'nextProductId'
+        proximoIdProduto: 'nextProductId',
+        historico: 'historicoMovimentacoes'
     };
 
     const store = {
@@ -58,6 +59,7 @@
         nomes: {},
         receitas: {},
         proximoIdProduto: 1,
+        historico: [],   // lista de movimentações, da mais antiga para a mais nova
         autorizacao: {} // { idProduto: quantidade } — só em memória, como antes
     };
 
@@ -86,6 +88,7 @@
             store.read(KEYS.proximoIdProduto, 1),
             Object.keys(state.nomes).map(Number)
         );
+        state.historico = store.read(KEYS.historico, []);
     }
 
     function salvarEstoque() {
@@ -97,6 +100,15 @@
         store.write(KEYS.nomesProdutos, state.nomes);
         store.write(KEYS.receitas, state.receitas);
         store.write(KEYS.proximoIdProduto, state.proximoIdProduto);
+    }
+
+    // Anota uma movimentação no histórico (usado pelo relatório em PDF)
+    function registrar(tipo, item, quantidade = null, unidade = '', detalhe = '') {
+        state.historico.push({
+            data: new Date().toISOString(),
+            tipo, item, quantidade, unidade, detalhe
+        });
+        store.write(KEYS.historico, state.historico);
     }
 
     /* =====================================================
@@ -220,6 +232,7 @@
 
         state.estoque.push({ id: state.proximoIdEstoque++, name: nome, quantity: qtd, unit: unidade });
         salvarEstoque();
+        registrar('Cadastro de ingrediente', nome, qtd, unidade, 'Quantidade inicial');
         renderEstoque();
 
         evento.target.reset();
@@ -238,6 +251,8 @@
         }
         item.quantity = +(Number(item.quantity) + valor).toFixed(4);
         salvarEstoque();
+        registrar('Entrada no estoque', item.name, valor, item.unit,
+            `Novo total: ${formatarQtd(item.quantity, item.unit)} ${item.unit}`);
         renderEstoque();
         avisar(`${item.name}: novo total ${formatarQtd(item.quantity, item.unit)} ${item.unit}.`);
     }
@@ -247,6 +262,7 @@
         if (!item || !confirm(`Excluir ${item.name} do estoque? Esta ação não pode ser desfeita.`)) return;
         state.estoque = state.estoque.filter(i => i.id !== id);
         salvarEstoque();
+        registrar('Exclusão de ingrediente', item.name, item.quantity, item.unit, 'Saldo no momento da exclusão');
         renderEstoque();
         avisar(`${item.name} removido do estoque.`);
     }
@@ -263,6 +279,8 @@
                 quantity: 0,
                 unit: MAPA_UNIDADE_ESTOQUE[String(unit).toLowerCase()] || 'Un'
             });
+            registrar('Cadastro de ingrediente', nomeEstoque, 0,
+                MAPA_UNIDADE_ESTOQUE[String(unit).toLowerCase()] || 'Un', 'Criado a partir de uma receita');
             criados++;
         }
         if (criados > 0) salvarEstoque();
@@ -322,6 +340,7 @@
         delete state.receitas[id];
         delete state.autorizacao[id];
         salvarProdutos();
+        registrar('Exclusão de produto', nome);
         renderProdutos();
         renderAutorizacao();
         avisar(`${nome} excluído.`);
@@ -376,7 +395,13 @@
             }
         }
 
-        // 2. Debita do estoque, sem deixar negativo
+        // 2. Anota no histórico cada produto autorizado
+        const descricao = ids.map(id => `${state.autorizacao[id]}x ${state.nomes[id]}`).join(', ');
+        for (const id of ids) {
+            registrar('Produção autorizada', state.nomes[id], state.autorizacao[id], 'un');
+        }
+
+        // 3. Debita do estoque, sem deixar negativo
         const avisos = [];
         for (const { nome, unidade, total } of totais.values()) {
             const item = state.estoque.find(i => i.name === nome);
@@ -391,14 +416,18 @@
             }
             if (item.quantity >= debito) {
                 item.quantity = +(item.quantity - debito).toFixed(4);
+                registrar('Saída do estoque', nome, debito, item.unit, `Autorização: ${descricao}`);
             } else {
-                avisos.push(`Estoque insuficiente de ${nome}: faltam ${formatarQtd(debito - item.quantity, item.unit)} ${item.unit}.`);
+                const falta = debito - item.quantity;
+                avisos.push(`Estoque insuficiente de ${nome}: faltam ${formatarQtd(falta, item.unit)} ${item.unit}.`);
+                registrar('Saída do estoque', nome, item.quantity, item.unit,
+                    `Autorização: ${descricao}. Faltaram ${formatarQtd(falta, item.unit)} ${item.unit}`);
                 item.quantity = 0;
             }
         }
         salvarEstoque();
 
-        // 3. Mostra o resumo
+        // 4. Mostra o resumo
         $('#resumoTexto').textContent =
             `${ids.length} produto(s) autorizado(s). Ingredientes usados:`;
         $('#resumoIngredientes').replaceChildren(...[...totais.values()].map(t =>
@@ -479,6 +508,8 @@
         state.receitas[id] = receita;
         salvarProdutos();
 
+        registrar('Cadastro de produto', nome, null, '',
+            'Receita: ' + Object.entries(receita).map(([ing, r]) => `${ing} ${r.quantity} ${r.unit}`).join(', '));
         const criados = sincronizarIngredientes(receita);
 
         $('#dialogProduto').close();
@@ -490,7 +521,77 @@
     }
 
     /* =====================================================
-       6. NAVEGAÇÃO ENTRE PAINÉIS (#estoque / #produtos)
+       6. RELATÓRIO EM PDF
+       ===================================================== */
+    function gerarRelatorioPDF() {
+        if (!window.jspdf) {
+            avisar('O gerador de PDF não carregou. Verifique a internet e recarregue a página.', 'erro');
+            return;
+        }
+
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF();
+        const agora = new Date();
+        const corMarca = [237, 143, 54];
+
+        // Cabeçalho
+        doc.setFontSize(16);
+        doc.text('Relatório de movimentação - Luana Salgadinhos', 14, 18);
+        doc.setFontSize(10);
+        doc.setTextColor(110);
+        doc.text(`Gerado em ${agora.toLocaleString('pt-BR')}`, 14, 25);
+        doc.setTextColor(0);
+
+        // Parte 1: como o estoque está agora
+        doc.setFontSize(13);
+        doc.text('Estoque atual', 14, 36);
+        doc.autoTable({
+            startY: 40,
+            head: [['Ingrediente', 'Quantidade', 'Unidade']],
+            body: state.estoque.length
+                ? state.estoque.map(i => [i.name, formatarQtd(i.quantity, i.unit), i.unit])
+                : [[{ content: 'Nenhum ingrediente no estoque.', colSpan: 3 }]],
+            headStyles: { fillColor: corMarca },
+            columnStyles: { 1: { halign: 'right' } }
+        });
+
+        // Parte 2: todas as movimentações, da mais nova para a mais antiga
+        let y = doc.lastAutoTable.finalY + 12;
+        doc.setFontSize(13);
+        doc.text('Movimentações', 14, y);
+        doc.autoTable({
+            startY: y + 4,
+            head: [['Data', 'Tipo', 'Item', 'Quantidade', 'Detalhe']],
+            body: state.historico.length
+                ? [...state.historico].reverse().map(m => [
+                    new Date(m.data).toLocaleString('pt-BR'),
+                    m.tipo,
+                    m.item,
+                    m.quantidade === null ? '' : `${formatarQtd(m.quantidade, m.unidade)} ${m.unidade}`,
+                    m.detalhe
+                ])
+                : [[{ content: 'Nenhuma movimentação registrada ainda.', colSpan: 5 }]],
+            headStyles: { fillColor: corMarca },
+            styles: { fontSize: 8 },
+            columnStyles: { 0: { cellWidth: 30 }, 3: { halign: 'right' } }
+        });
+
+        // Número da página no rodapé
+        const totalPaginas = doc.getNumberOfPages();
+        for (let i = 1; i <= totalPaginas; i++) {
+            doc.setPage(i);
+            doc.setFontSize(8);
+            doc.setTextColor(110);
+            doc.text(`Página ${i} de ${totalPaginas}`, 196, 290, { align: 'right' });
+        }
+
+        const dataArquivo = agora.toLocaleDateString('pt-BR').split('/').reverse().join('-'); // ex.: 2026-09-22
+        doc.save(`relatorio-movimentacao-${dataArquivo}.pdf`);
+        avisar('Relatório baixado.');
+    }
+
+    /* =====================================================
+       7. NAVEGAÇÃO ENTRE PAINÉIS (#estoque / #produtos)
        ===================================================== */
     const PAINEIS = {
         estoque: {
@@ -507,7 +608,7 @@
         }
     };
 
-    let painelAtual = 'estoque';
+    let painelAtual = 'produtos';
 
     function mostrarPainel(nome) {
         painelAtual = PAINEIS[nome] ? nome : 'produtos';
@@ -534,7 +635,7 @@
     }
 
     /* =====================================================
-       7. EVENTOS E INICIALIZAÇÃO
+       8. EVENTOS E INICIALIZAÇÃO
        ===================================================== */
     $('#btnTrocarPainel').addEventListener('click', () => {
         location.hash = painelAtual === 'estoque' ? 'produtos' : 'estoque';
@@ -562,6 +663,7 @@
     $('#btnCancelarProduto').addEventListener('click', () => $('#dialogProduto').close());
     $('#btnFinalizar').addEventListener('click', finalizarAutorizacao);
     $('#btnFecharResumo').addEventListener('click', () => $('#dialogResumo').close());
+    $('#btnRelatorio').addEventListener('click', gerarRelatorioPDF);
 
     // Se o estoque mudar em outra aba (ex.: painel.html aberto junto), recarrega os dados
     window.addEventListener('storage', (e) => {
